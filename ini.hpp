@@ -122,7 +122,7 @@ namespace neo {
 							std::getline(is, line);
 							std::pair<std::string, std::string> pr = _split_comment(line);
 							val += _str_trim(pr.first);
-							comm += pr.second + "\n";
+							comm += (pr.second.empty() ? "" : pr.second + "\n");
 						}
 						if(!comm.empty())
 							comm.pop_back();
@@ -195,13 +195,13 @@ namespace neo {
 				}
 
 				template<class Ostream, typename = typename std::enable_if<std::is_constructible<std::ostream&, Ostream>::value || std::is_constructible<std::ostream&&, Ostream>::value>::type>
-				Ostream&& to_file(Ostream&& os) const {
-					os << to_string();
+				Ostream&& to_file(Ostream&& os, bool comments = true) const {
+					os << to_string(comments);
 					return std::forward<Ostream>(os);
 				}
-				std::ofstream&& to_file(const std::string& filename) const {
+				std::ofstream&& to_file(const std::string& filename, bool comments = true) const {
 					std::ofstream ofs(filename);
-					ofs << to_string();
+					ofs << to_string(comments);
 					return std::move(ofs);
 				}
 
@@ -288,13 +288,13 @@ namespace neo {
 				}
 
 				template<class Ostream, typename = typename std::enable_if<std::is_constructible<std::ostream&, Ostream>::value || std::is_constructible<std::ostream&&, Ostream>::value>::type>
-				Ostream&& to_file(Ostream&& os) const {
-					os << to_string();
+				Ostream&& to_file(Ostream&& os, bool comments = true) const {
+					os << to_string(comments);
 					return std::forward<Ostream>(os);
 				}
-				std::ofstream&& to_file(const std::string& filename) const {
+				std::ofstream&& to_file(const std::string& filename, bool comments = true) const {
 					std::ofstream ofs(filename);
-					ofs << to_string();
+					ofs << to_string(comments);
 					return std::move(ofs);
 				}
 
