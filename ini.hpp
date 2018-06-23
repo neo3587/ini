@@ -22,6 +22,7 @@
 #include <sstream>
 #include <cctype>
 #include <iomanip>
+#include <limits>
 #include <functional>
 
 
@@ -41,7 +42,17 @@ namespace neo {
 			}
 			return std::move(str);
 		}
-		
+		std::string _str_trim(const std::string& str) {
+			size_t fp = str.find_first_not_of(" \t\n\r\f\v"), lp = str.find_last_not_of(" \t\n\r\f\v");
+			fp = fp == std::string::npos ? 0 : fp;
+			lp = lp == std::string::npos ? 0 : lp;
+			return str.substr(fp, lp - fp + 1);
+		}
+		std::pair<std::string, std::string> _split_comment(const std::string& str) {
+			size_t pos = str.find_first_of(";#");
+			return std::pair<std::string, std::string>(str.substr(0, pos), pos == std::string::npos ? "" : str.substr(pos + 1));
+		}
+
 		struct lcase_pred : public std::binary_function<std::string, std::string, bool> {
 			bool operator()(const std::string& left, const std::string& right) const {
 				return std::lexicographical_compare(left.begin(), left.end(), right.begin(), right.end(), [](char a, char b) { return std::tolower(a) < std::tolower(b); });
@@ -54,6 +65,8 @@ namespace neo {
 
 				std::string comment;
 
+				// Constructors:
+
 				using std::string::string;
 				value() {}
 				value(const value&) = default;
@@ -64,6 +77,8 @@ namespace neo {
 				using std::string::operator=;
 				value& operator=(const value&) = default;
 				value& operator=(value&&) = default;
+
+				// Element Access:
 
 				template<class T, typename = typename std::enable_if<std::is_arithmetic<T>::value>::type>
 				operator T() const {
@@ -91,9 +106,30 @@ namespace neo {
 					return *this;
 				}
 
-
 		};
 		class keys : public oi_map<std::string, value, lcase_pred> {
+
+			protected:
+
+				void _keyval_insert(std::string& line, std::istream& is, std::string& comment) {
+					std::size_t equal_pos = line.find_first_of('=');
+					if(equal_pos != std::string::npos) {
+						std::string key = _str_trim(line.substr(0, equal_pos));
+						std::string val = _str_trim(line.substr(equal_pos + 1));
+						std::string comm = std::move(comment);
+						while(val.back() == '\\' && is.good() && !is.eof()) { // append multi-line values
+							val.pop_back();
+							std::getline(is, line);
+							std::pair<std::string, std::string> pr = _split_comment(line);
+							val += _str_trim(pr.first);
+							comm += pr.second + "\n";
+						}
+						if(!comm.empty())
+							comm.pop_back();
+						emplace_hint(end(), std::move(key), std::move(val))->second.comment = std::move(comm);
+					};
+				}
+				friend class sections;
 
 			public:
 
@@ -101,11 +137,15 @@ namespace neo {
 
 				using value = value;
 
+				// Constructors:
+
 				keys() {}
 				keys(const keys&) = default;
 				keys(keys&&) = default;
 				keys& operator=(const keys&) = default;
 				keys& operator=(keys&&) = default;
+
+				// Modifiers:
 
 				/* Renames the selected key, any iterator to the key before the rename becomes unusable
 				*/
@@ -124,11 +164,53 @@ namespace neo {
 					return rename(find(key), new_name);
 				}
 
+				// IO Operations:
+
+				template<class Istream, typename = typename std::enable_if<std::is_constructible<std::istream&, Istream>::value || std::is_constructible<std::istream&&, Istream>::value>::type>
+				Istream&& parse_file(Istream&& is) {
+
+					clear();
+
+					std::string line, comm;
+
+					while(is.good() && !is.eof()) {
+						std::getline(is, line);
+						std::pair<std::string, std::string> pr = _split_comment(line);
+						line = _str_trim(pr.first);
+						comm += (pr.second.empty() ? "" : pr.second + "\n");
+
+						if(line.empty())
+							continue;
+
+						_keyval_insert(pr.first, is, comm);
+					}
+
+					return std::forward<Istream>(is);
+				}
+				std::ifstream&& parse_file(const std::string& filename) {
+					return std::move(parse_file(std::ifstream(filename)));
+				}
+				void parse_str(const std::string& str) {
+					parse_file(std::istringstream(str));
+				}
+
+				template<class Ostream, typename = typename std::enable_if<std::is_constructible<std::ostream&, Ostream>::value || std::is_constructible<std::ostream&&, Ostream>::value>::type>
+				Ostream&& to_file(Ostream&& os) const {
+					os << to_string();
+					return std::forward<Ostream>(os);
+				}
+				std::ofstream&& to_file(const std::string& filename) const {
+					std::ofstream ofs(filename);
+					ofs << to_string();
+					return std::move(ofs);
+				}
+
+				// Other Operations:
+
 				std::string to_string(bool comments = true) const noexcept {
 					std::string str;
-					for(const_iterator it = this->cbegin(); it != this->cend(); ++it) 
+					for(const_iterator it = this->cbegin(); it != this->cend(); ++it)
 						str += (comments ? _comm_add_sharp(it->second.comment) : "") + it->first + " = " + it->second + "\n";
-					//if(str.back() == '\n') str.pop_back();
 					return std::move(str);
 				}
 
@@ -140,30 +222,88 @@ namespace neo {
 				using iterator		 = typename oi_map<std::string, keys, lcase_pred>::iterator;
 				using const_iterator = typename oi_map<std::string, keys, lcase_pred>::const_iterator;
 
+				// Constructors:
+
 				using oi_map<std::string, keys, lcase_pred>::oi_map;
 
-				/* Renames the selected section, any iterator to the section before the rename becomes unusable					
+				// Modifiers:
+
+				/* Renames the selected section, any iterator to the section before the rename becomes unusable
 				*/
 				iterator rename(const_iterator pos, const std::string& new_name) {
-					if(pos == this->end() || this->find(new_name) != this->end())
-						return this->end();
+					if(pos == end() || find(new_name) != end())
+						return end();
 					keys k = std::move(pos->second);
 					pos = erase(pos);
 					iterator it = emplace(new_name, std::move(k)).first;
-					this->splice(pos, it);
+					splice(pos, it);
 					return it;
 				}
 				/* Renames the selected section, any iterator to the section before the rename becomes unusable
-				*/ 
+				*/
 				iterator rename(const std::string& section, const std::string& new_name) {
-					return rename(this->find(section), new_name);
+					return rename(find(section), new_name);
 				}
+
+				// IO Operations:
+
+				template<class Istream, typename = typename std::enable_if<std::is_constructible<std::istream&, Istream>::value || std::is_constructible<std::istream&&, Istream>::value>::type>
+				Istream&& parse_file(Istream&& is) {
+
+					clear();
+
+					iterator it = end();
+					std::string line, comm;
+
+					while(is.good() && !is.eof()) {
+
+						std::getline(is, line);
+						std::pair<std::string, std::string> pr = _split_comment(line);
+						line = _str_trim(pr.first);
+						comm += (pr.second.empty() ? "" : pr.second + "\n");
+
+						if(line.empty())
+							continue;
+
+						// if it's a section
+						else if(line.front() == '[' && line.back() == ']') {
+							it = emplace(line.substr(1, line.size() - 2), keys()).first;
+							if(!comm.empty())
+								comm.pop_back();
+							it->second.comment = std::move(comm);
+						}
+
+						// insert key only if a section was found
+						else if(it != end())
+							it->second._keyval_insert(line, is, comm);
+					}
+
+					return std::forward<Istream>(is);
+				}
+				std::ifstream&& parse_file(const std::string& filename) {
+					return std::move(parse_file(std::ifstream(filename)));
+				}
+				void parse_str(const std::string& str) {
+					parse_file(std::istringstream(str));
+				}
+
+				template<class Ostream, typename = typename std::enable_if<std::is_constructible<std::ostream&, Ostream>::value || std::is_constructible<std::ostream&&, Ostream>::value>::type>
+				Ostream&& to_file(Ostream&& os) const {
+					os << to_string();
+					return std::forward<Ostream>(os);
+				}
+				std::ofstream&& to_file(const std::string& filename) const {
+					std::ofstream ofs(filename);
+					ofs << to_string();
+					return std::move(ofs);
+				}
+
+				// Other Operations:
 
 				std::string to_string(bool comments = true) const noexcept {
 					std::string str;
-					for(const_iterator it = this->cbegin(); it != this->cend(); ++it) 
+					for(const_iterator it = this->cbegin(); it != this->cend(); ++it)
 						str += (comments ? _comm_add_sharp(it->second.comment) : "") + "[" + it->first + "]\n" + it->second.to_string(comments) + "\n";
-					//if(str.back() == '\n') str.pop_back(); 
 					return std::move(str);
 				}
 
@@ -189,121 +329,14 @@ namespace neo {
 			ini& operator=(ini&&) = default;
 
 			ini(const std::string& filename) {
-				parse_file(filename);
+				this->parse_file(filename);
 			}
 			template<class Istream, typename = typename std::enable_if<std::is_constructible<std::istream&, Istream>::value || std::is_constructible<std::istream&&, Istream>::value>::type>
 			ini(Istream&& is) {
-				parse_file(std::forward<Istream>(is));
+				this->parse_file(std::forward<Istream>(is));
 			}
 
-			// IO Operations:
-
-			template<class Istream, typename = typename std::enable_if<std::is_constructible<std::istream&, Istream>::value || std::is_constructible<std::istream&&, Istream>::value>::type>
-			Istream&& parse_file(Istream&& is) {
-				this->clear();
-				return std::forward<Istream>(_parse_file(std::forward<Istream>(is)));
-			}
-			std::ifstream&& parse_file(const std::string& filename) {
-				return std::move(parse_file(std::ifstream(filename)));
-			}
-			void parse_str(const std::string& str) {
-				parse_file(std::istringstream(str));
-			}
-
-			template<class Ostream, typename = typename std::enable_if<std::is_constructible<std::ostream&, Ostream>::value || std::is_constructible<std::ostream&&, Ostream>::value>::type>
-			Ostream&& to_file(Ostream&& os) const {
-				os << this->to_string();
-				return std::forward<Ostream>(os);
-			}
-			std::ofstream&& to_file(const std::string& filename) const {
-				std::ofstream ofs(filename);
-				ofs << this->to_string();
-				return std::move(ofs);
-			}
-
-		private:
-
-			std::string _str_trim(const std::string& str) {
-				size_t fp = str.find_first_not_of(" \t\n\r\f\v"), lp = str.find_last_not_of(" \t\n\r\f\v");
-				fp = fp == std::string::npos ? 0 : fp;
-				lp = lp == std::string::npos ? 0 : lp;
-				return str.substr(fp, lp - fp + 1);
-			}
-			std::pair<std::string, std::string> _split_comment(const std::string& str) {
-				size_t pos = str.find_first_of(";#");
-				return std::pair<std::string, std::string>(str.substr(0, pos), pos == std::string::npos ? "" : str.substr(pos + 1));
-			}
-			void _keyval_insert(std::string& line, std::istream& is, keys& k, std::string& acc_comm) {
-				std::size_t equal_pos = line.find_first_of('=');
-				if(equal_pos != std::string::npos) {
-					std::string key = _str_trim(line.substr(0, equal_pos));
-					std::string val = _str_trim(line.substr(equal_pos + 1));
-					std::string comm = std::move(acc_comm);
-					while(val.back() == '\\' && is.good() && !is.eof()) { // append multi-line values
-						val.pop_back();
-						std::getline(is, line);
-						std::pair<std::string, std::string> pr = _split_comment(line);
-						val += _str_trim(pr.first);
-						comm += pr.second + "\n";
-					}
-					if(!comm.empty())
-						comm.pop_back();
-					k.emplace_hint(k.end(), std::move(key), std::move(val))->second.comment = std::move(comm);
-				};
-			}
-
-			template<class Istream>
-			typename std::enable_if<std::integral_constant<bool, !Sections>::value, Istream&&>::type _parse_file(Istream&& is) {
-				
-				std::string line, comm;
-
-				while(is.good() && !is.eof()) {
-					std::getline(is, line);
-					std::pair<std::string, std::string> pr = _split_comment(line);
-					line = _str_trim(pr.first);
-					comm += (pr.second.empty() ? "" : pr.second + "\n");
-					
-					if(line.empty())
-						continue;
-					
-					_keyval_insert(pr.first, is, *this, comm);
-				}
-
-				return std::forward<Istream>(is);
-			}
-			template<class Istream>
-			typename std::enable_if<std::integral_constant<bool, Sections>::value, Istream&&>::type _parse_file(Istream&& is) {
-
-				typename ini::iterator it = this->end();
-				std::string line, comm;
-
-				while(is.good() && !is.eof()) {
-
-					std::getline(is, line);
-					std::pair<std::string, std::string> pr = _split_comment(line);
-					line = _str_trim(pr.first);
-					comm += (pr.second.empty() ? "" : pr.second + "\n");
-
-					if(line.empty())
-						continue;
-
-					// if it's a section
-					else if(line.front() == '[' && line.back() == ']') {
-						it = this->emplace(line.substr(1, line.size() - 2), keys()).first;
-						if(!comm.empty())
-							comm.pop_back();
-						it->second.comment = std::move(comm);
-					}
-
-					// insert key only if a section was found
-					else if(it != this->end())
-						_keyval_insert(line, is, it->second, comm);
-				}
-
-				return std::forward<Istream>(is);
-			}
-
-	};	
+	};
 
 }
 
