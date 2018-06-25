@@ -66,17 +66,23 @@ namespace neo {
 				std::string comment;
 
 				// Constructors:
-
+	
 				using std::string::string;
 				value() {}
-				value(const value&) = default;
-				value(value&&) = default;
+				value(const value& other) : std::string(other) {}
+				value(value&& other) : std::string(std::forward<value>(other)) {}
 				value(const std::string& str) : std::string(str) {}
 				value(std::string&& str) : std::string(std::forward<std::string>(str)) {}
 
 				using std::string::operator=;
-				value& operator=(const value&) = default;
-				value& operator=(value&&) = default;
+				value& operator=(const value& other) {
+					std::string::operator=(other);
+					return *this;
+				};
+				value& operator=(value&& other) {
+					std::string::operator=(std::forward<value>(other));
+					return *this;
+				}
 
 				// Element Access:
 
@@ -140,22 +146,28 @@ namespace neo {
 				// Constructors:
 
 				keys() {}
-				keys(const keys&) = default;
-				keys(keys&&) = default;
-				keys& operator=(const keys&) = default;
-				keys& operator=(keys&&) = default;
+				keys(const keys& other) : oi_map<std::string, value, lcase_pred>(other) {}
+				keys(keys&& other) : oi_map<std::string, value, lcase_pred>(std::forward<keys>(other)) {}
+				keys& operator=(const keys& other) {
+					oi_map<std::string, value, lcase_pred>::operator=(other);
+					return *this;
+				};
+				keys& operator=(keys&& other) {
+					oi_map<std::string, value, lcase_pred>::operator=(std::forward<keys>(other));
+					return *this;
+				}
 
 				// Modifiers:
 
 				/* Renames the selected key, any iterator to the key before the rename becomes unusable
 				*/
 				iterator rename(const_iterator pos, const std::string& new_name) {
-					if(pos == this->end())
-						return this->end();
+					if(pos == end())
+						return end();
 					value v = std::move(pos->second);
-					pos = this->erase(pos);
-					iterator it = this->emplace_hint(this->end(), new_name, std::move(v));
-					this->splice(pos, it);
+					pos = erase(pos);
+					iterator it = emplace_hint(end(), new_name, std::move(v));
+					splice(pos, it);
 					return it;
 				}
 				/* Renames the selected key, any iterator to the key before the rename becomes unusable
@@ -209,7 +221,7 @@ namespace neo {
 
 				std::string to_string(bool comments = true) const noexcept {
 					std::string str;
-					for(const_iterator it = this->cbegin(); it != this->cend(); ++it)
+					for(const_iterator it = cbegin(); it != cend(); ++it)
 						str += (comments ? _comm_add_sharp(it->second.comment) : "") + it->first + " = " + it->second + "\n";
 					return std::move(str);
 				}
@@ -302,7 +314,7 @@ namespace neo {
 
 				std::string to_string(bool comments = true) const noexcept {
 					std::string str;
-					for(const_iterator it = this->cbegin(); it != this->cend(); ++it)
+					for(const_iterator it = cbegin(); it != cend(); ++it)
 						str += (comments ? _comm_add_sharp(it->second.comment) : "") + "[" + it->first + "]\n" + it->second.to_string(comments) + "\n";
 					return std::move(str);
 				}
